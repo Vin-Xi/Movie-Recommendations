@@ -6,6 +6,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.metrics.pairwise import linear_kernel
 from ast import literal_eval 
 from sklearn.feature_extraction.text import CountVectorizer
+from surprise import Reader,Dataset,SVD
+from surprise.model_selection import cross_validate
+import sys
 
 dataset1=pd.read_csv('tmdb_5000_credits.csv')
 dataset2=pd.read_csv('tmdb_5000_movies.csv')
@@ -37,7 +40,7 @@ selected_movies['score']=selected_movies.apply(getWeightage,axis=1)# Creates a n
 selected_movies=selected_movies.sort_values('score',ascending=False)
 
 
-
+#To get a popularity based recommendation we can sort the dataset by popularity
 pop=dataset2.sort_values('popularity',ascending=False)
 plt.figure(figsize=(12,4))
 plt.barh(pop['title'].head(10),pop['popularity'].head(10),align='center',color='red')
@@ -68,18 +71,21 @@ def find_recommendations(title,cos_sim=cos_sim):
     movie_indices=[i[0] for i in sim_scores]
     return dataset2['title'].iloc[movie_indices]
 
-
+#Extracting these columns and converting them to safe objects by using literal_eval
 features=['cast','crew','keywords','genres']
 
 for f in features:
     dataset2[f]=dataset2[f].apply(literal_eval)
 
+
+#Finding the director 
 def find_director(dataset):
     for i in dataset:
         if i['job']=='Director':
             return i['name']
     return np.nan
 
+#Get a list of top 3 names from any list
 def get_list(dataset):
     if isinstance(dataset,list):
         names=[ i['name'] for i in dataset]
@@ -96,6 +102,8 @@ features=['cast','keywords','genres']
 for f in features:
     dataset2[f]=dataset2[f].apply(get_list)
 
+
+#After extracting dat we'll clean it
 def clean_data(dataset):
     if isinstance(dataset,list):
         return [str.lower(i.replace(" ","")) for i in dataset]
@@ -110,10 +118,14 @@ features=['cast','genres','keywords','Director']
 for f in features:
     dataset2[f]=dataset2[f].apply(clean_data)
 
+
+#Mixing all the strings to vectorize them
 def mix_data(dataset):
     return ' '.join(dataset['keywords'])+' '+' '.join(dataset['cast'])+' '+' '.join(dataset['Director'])+' '+' '.join(dataset['genres'])
 dataset2['mixed']=dataset2.apply(mix_data,axis=1)
 
+
+#Count Vectorizer is the same as tfidfVectorizer but counts instead of assigning scores according to term frequency
 vectorizer=CountVectorizer(stop_words="english")
 count_matrix=vectorizer.fit_transform(dataset2['mixed'])
 
@@ -122,5 +134,16 @@ cosine_sim=cosine_similarity(count_matrix,count_matrix)
 dataset2=dataset2.reset_index()
 indices=pd.Series(dataset2.index,index=dataset2['title'])
 
+reader=Reader()
+ratings=pd.read_csv('ratings_small.csv')
 
-print(find_recommendations('Avatar',cosine_sim))
+data=Dataset.load_from_df(ratings[['userId','movieId','rating']],reader)
+
+#Using SVD to make data more scaleable and less sparse matrix
+svd=SVD()
+#Checking errors on cross validation set
+cross_validate(svd, data, measures=['RMSE', 'MAE'], cv=5, verbose=True)
+trainset = data.build_full_trainset()#Train the model
+svd.fit(trainset)#Fit and check prediction
+print(svd.predict(1, 302, 3))#Estimated rating was 2.8 and real rating was 3 so 94 percent accuracy 
+
